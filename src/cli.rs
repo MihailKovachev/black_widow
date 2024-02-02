@@ -6,9 +6,9 @@ use clap::*;
 #[command(author = "Mihail Kovachev", version, about, long_about = None)]
 pub struct Cli {
 
-    #[arg(short = 'u', long = "url", value_name = "Base URL")]
-    pub base_url: String,
+    #[arg(short = 't', long = "targets", value_name = "Targets File")]
+    pub targets: PathBuf,
 
-    #[arg(short = 'o', long = "output-dir", value_name = "Output Directory")]
-    pub output_dir: PathBuf
+    //#[arg(short = 'o', long = "output-dir", value_name = "Output Directory")]
+    //pub output_dir: PathBuf
 }

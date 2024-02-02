@@ -1,30 +1,52 @@
 mod cli;
 mod crawler;
+mod target;
 
 use clap::Parser;
-pub use cli::*;
-pub use crawler::*;
+use cli::*;
+use crawler::*;
+use target::*;
+
+use std::{ fs::File, io::{BufRead, BufReader}};
 
 #[tokio::main]
 async fn main() {
-    
     let cli = Cli::parse();
+    let targets_file = match File::open(&cli.targets) {
+        Ok(file) => file,
+        Err(error) => {eprintln!("Failed to open the file with the target URLs: {}", error.to_string()); return }
+    };
 
-    if let Ok(base_url) = reqwest::Url::parse(&cli.base_url)
-    {
-        let mut client_config = reqwest::Client::builder();
+    let targets_reader = BufReader::new(targets_file);
+    let mut targets: Vec<CrawlTarget> = Vec::new();
 
-        client_config = client_config.user_agent(concat!(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")));
-
-        if let Ok(client) = client_config.build()
-        {
-            Crawler::crawl(&client, base_url).await;
-        }
-        else {
-            eprintln!("Failed to initialise the HTTP(S) client.")
-        }
+    // Process target URLs from file
+    for line in targets_reader.lines() {
+        match line {
+            Ok(line) => if let Ok(url) = reqwest::Url::parse(&line) {
+                if CrawlTarget::is_url_scheme_supported(&url)
+                {
+                    targets.push(CrawlTarget::new(url));
+                }
+                else {
+                    eprintln!("Scheme {} not supported.", url.scheme());
+                }
+                 
+            }else {
+                eprintln!("Failed to parse target URL: {}", line);
+            },
+            Err(error) => eprintln!("Failed to read targets from file: {}", error.to_string())
+        };
     }
-    else {
-        eprintln!("The specified URL is not valid.");
+
+    let mut client_config = reqwest::Client::builder();
+
+    client_config =
+        client_config.user_agent(concat!(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")));
+
+    if let Ok(client) = client_config.build() {
+        
+    } else {
+        eprintln!("Failed to initialise the HTTP(S) client.")
     }
 }
