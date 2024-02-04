@@ -1,13 +1,12 @@
 mod cli;
 mod crawler;
-mod target;
 
 use clap::Parser;
 use cli::*;
 use crawler::*;
-use target::*;
+use crawl_target::*;
 
-use std::{ fs::File, io::{BufRead, BufReader}};
+use std::{ fs::File, io::{BufRead, BufReader}, collections::HashSet};
 
 #[tokio::main]
 async fn main() {
@@ -18,20 +17,21 @@ async fn main() {
     };
 
     let targets_reader = BufReader::new(targets_file);
-    let mut targets: Vec<CrawlTarget> = Vec::new();
+    let mut initial_targets: HashSet<CrawlTarget> = HashSet::new();
 
     // Process target URLs from file
     for line in targets_reader.lines() {
         match line {
             Ok(line) => if let Ok(url) = reqwest::Url::parse(&line) {
-                if CrawlTarget::is_url_scheme_supported(&url)
-                {
-                    targets.push(CrawlTarget::new(url));
+                match url.host() {
+                    Some(url_host) => {
+                        match CrawlTarget::new(url_host) {
+                            Ok(target) => { initial_targets.insert(target); },
+                            Err(error) => { eprintln!("Failed to initialise crawl target: {}", error.to_string()) }
+                        }
+                    },
+                    None => ()
                 }
-                else {
-                    eprintln!("Scheme {} not supported.", url.scheme());
-                }
-                 
             }else {
                 eprintln!("Failed to parse target URL: {}", line);
             },
@@ -39,14 +39,13 @@ async fn main() {
         };
     }
 
-    let mut client_config = reqwest::Client::builder();
-
-    client_config =
-        client_config.user_agent(concat!(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")));
-
-    if let Ok(client) = client_config.build() {
-        
-    } else {
-        eprintln!("Failed to initialise the HTTP(S) client.")
+    match Vdovitsa::new(initial_targets)
+    {
+        Ok(mut crawler) => {
+            crawler.crawl().await;
+        },
+        Err(error) => { eprintln!("{}", error.to_string()); }
     }
+    
+
 }
