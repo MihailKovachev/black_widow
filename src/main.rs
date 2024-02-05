@@ -19,16 +19,16 @@ async fn main() {
     let targets_reader = BufReader::new(targets_file);
     let mut initial_targets: HashSet<CrawlTarget> = HashSet::new();
 
+    console_subscriber::init();
+
     // Process target URLs from file
     for line in targets_reader.lines() {
         match line {
             Ok(line) => if let Ok(url) = reqwest::Url::parse(&line) {
                 match url.host() {
                     Some(url_host) => {
-                        match CrawlTarget::new(url_host) {
-                            Ok(target) => { initial_targets.insert(target); },
-                            Err(error) => { eprintln!("Failed to initialise crawl target: {}", error.to_string()) }
-                        }
+                        let target = CrawlTarget::new(url_host);
+                        initial_targets.insert(target); 
                     },
                     None => ()
                 }
@@ -42,7 +42,7 @@ async fn main() {
     match Vdovitsa::new(initial_targets)
     {
         Ok(mut crawler) => {
-            tokio::spawn(async move { crawler.crawl().await }).await;
+            tokio::spawn(async move { crawler.crawl().await }).await.unwrap();
         },
         Err(error) => { eprintln!("{}", error.to_string()); }
     }

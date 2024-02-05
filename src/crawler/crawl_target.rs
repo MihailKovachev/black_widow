@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{hash::Hash, collections::HashSet};
+use std::{hash::Hash};
 
 use url::Host;
 
@@ -7,42 +7,38 @@ use url::Host;
 #[derive(Debug, Eq, Clone)]
 pub struct CrawlTarget {
 
-    host: String, // The target host
-    host_depth: HostDepth
+    host: Host<String>, // The target host
+    //host_depth: HostDepth
     
 }
 
 impl CrawlTarget {
-    pub fn new(host: Host<&str>) -> Result<CrawlTarget, CrawlTargetError> {
+    pub fn new(host: Host<&str>) -> CrawlTarget {
 
         match host
         {
             Host::Domain(host) => {
                 let host = host.trim_end_matches('.').to_owned(); // Remove potential dot characters at the end of the host name
-                let host_depth = if host.matches('.').count() <= 1 { HostDepth::Domain } else { HostDepth::Subdomain } ;
+                // let host_depth = if host.matches('.').count() <= 1 { HostDepth::Domain } else { HostDepth::Subdomain } ;
 
-                return Ok(CrawlTarget {
-                    host, 
-                    host_depth}
-                )},
+                CrawlTarget {
+                    host: Host::Domain(host), 
+                }
+            },
 
-            _ => Err(CrawlTargetError::with_message("Crawl target cannot be an IP address."))
+            Host::Ipv4(ip) => CrawlTarget {
+                host: Host::Ipv4(ip), 
+            },
+
+            Host::Ipv6(ip) => CrawlTarget {
+                host: Host::Ipv6(ip), 
+            }
         }
 
-    }
-
-    /// Returns whether the crawl target is a domain or a subdomain.
-    pub fn host_depth(&self) -> HostDepth {
-        if self.host.matches('.').count() <= 1 {
-            return HostDepth::Domain;
-        }
-        else {
-            return HostDepth::Subdomain;
-        }
     }
 
     /// Returns the host of the crawl target
-    pub fn host(&self) -> &str {
+    pub fn host(&self) -> &Host<String> {
         &self.host
     }
 }
@@ -57,12 +53,6 @@ impl Hash for CrawlTarget {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.host.hash(state); // A crawl target is unique only if its host is
     }
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub enum HostDepth {
-    Domain,
-    Subdomain
 }
 
 #[derive(Debug)]

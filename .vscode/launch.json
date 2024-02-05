@@ -12,7 +12,6 @@
                 "args": [
                     "build",
                     "--bin=cherna_vdovitsa",
-                    // "--package=black_widow"
                 ],
                 "filter": {
                     "name": "cherna_vdovitsa",
@@ -23,7 +22,10 @@
                 "--targets",
                 "targets"
             ],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUSTFLAGS": "--cfg tokio_unstable"
+            }
         },
         {
             "type": "lldb",
@@ -42,7 +44,10 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
-        }
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUSTFLAGS": "--cfg tokio_unstable"
+            }
+        },
     ]
 }
