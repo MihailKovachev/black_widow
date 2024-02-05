@@ -143,10 +143,27 @@ impl Vdovitsa {
                                     HostRelation::Unrelated => (), // Skip links to unrelated hosts
                                 }
                             }
-                            None => {}
+                            None => (),
                         }
                     } else {
                         continue;
+                    }
+                } else {
+                    // The link may be relative
+                    let relative_path = link.trim_end_matches('/').to_string();
+                    if relative_path.starts_with('/') {
+                        // The URL is indeed a relative path
+                        let constructed_link =
+                            format!("https://{}{}", crawl_target.host().to_string(), relative_path);
+                        if !crawled_urls.contains(&constructed_link) {
+                            println!(
+                                "Adding URL {} for target {}",
+                                constructed_link.to_string(),
+                                crawl_target.host().to_string()
+                            );
+                            tokio::spawn(Self::crawl_url(client.clone(), Url::parse(&constructed_link).unwrap(), tx.clone()));
+                            crawled_urls.insert(constructed_link);
+                        }
                     }
                 }
             }
@@ -156,10 +173,7 @@ impl Vdovitsa {
     async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<HashSet<String>>) -> () {
         let mut new_links_to_crawl: HashSet<String> = HashSet::new();
 
-        println!(
-            "Crawling URL {}",
-            url.to_string(),
-        );
+        println!("Crawling URL {}", url.to_string(),);
 
         // Send get request
         if let Ok(response) = client.get(url).send().await {
@@ -172,7 +186,7 @@ impl Vdovitsa {
                 for element in document.select(&selector) {
                     // Try to get the href attribute
                     if let Some(href) = element.value().attr("href") {
-                        new_links_to_crawl.insert(href.to_string());
+                        new_links_to_crawl.insert(href.to_owned());
                     }
                 }
             }
