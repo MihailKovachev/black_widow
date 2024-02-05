@@ -42,7 +42,7 @@ async fn main() {
     match Vdovitsa::new(initial_targets)
     {
         Ok(mut crawler) => {
-            crawler.crawl().await;
+            tokio::spawn(async move { crawler.crawl().await }).await;
         },
         Err(error) => { eprintln!("{}", error.to_string()); }
     }

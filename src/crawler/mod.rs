@@ -8,6 +8,7 @@ use scraper::{Html, Selector};
 
 use crawl_target::{CrawlTarget};
 use tokio::{sync::mpsc, time::error::Elapsed};
+use url::Url;
 
 pub struct Vdovitsa {
     crawl_targets: HashMap<CrawlTarget, RefCell<CrawlStatus>>,
@@ -42,32 +43,74 @@ impl Vdovitsa {
     }
 
     pub async fn crawl(&mut self) {
+        let (tx, mut rx) = mpsc::channel::<CrawlTarget>(32);
+
         // Start crawling the initial targets
         for (target, status) in &mut self.crawl_targets {
             status.replace(CrawlStatus::InProgress); // Why though, Rust, why?
 
-            tokio::spawn(Self::crawl_target(self.client.clone(), target.clone()));
+            let client = self.client.clone();
+            let target = target.clone();
+            let tx = tx.clone();
+            
+            tokio::spawn(Self::crawl_target(client, target, tx));
         }
-
-        let (tx, mut rx) = mpsc::channel::<CrawlTarget>(32);
 
         while let Some(new_potential_target) = rx.recv().await {
             if !self.crawl_targets.contains_key(&new_potential_target) {
                 
                 self.crawl_targets.insert(new_potential_target.clone(), RefCell::new(CrawlStatus::InProgress));
+                println!("Crawling new target: {}", new_potential_target.host());
 
-                tokio::spawn(Self::crawl_target(self.client.clone(), new_potential_target));
+                let client = self.client.clone();
+                let tx = tx.clone();
+                
+                tokio::spawn(Self::crawl_target(client, new_potential_target, tx));
+            }
+        }
+
+        println!("Crawling done");
+    }
+
+    pub async fn crawl_target(client: Client, crawl_target: CrawlTarget, new_targets: mpsc::Sender<CrawlTarget>) {
+        println!("Crawling target... {}", crawl_target.host());
+        let crawl_target_url = format!("https://{}", crawl_target.host());
+
+        let mut crawled_urls: HashSet<String> = HashSet::new();
+        crawled_urls.insert(crawl_target_url.clone());
+        
+        let (tx, mut new_links) = mpsc::channel(32);
+
+        tokio::spawn(Self::crawl_url(client.clone(), Url::parse(&crawl_target_url).unwrap(), tx.clone()));
+        
+        while let Some(new_potential_link) = new_links.recv().await {
+            for link in new_potential_link {
+                if let Ok(parsed_url) = Url::parse(&link)
+                {
+                    if let Some(parsed_host) = parsed_url.domain() {
+
+                        if parsed_host.eq(crawl_target.host()) {
+                            
+                            crawled_urls.insert(parsed_host.to_string());
+                            println!("Crawling URL {} for target {}", parsed_url.to_string(), crawl_target.host());
+
+                            tokio::spawn(Self::crawl_url(client.clone(), parsed_url, tx.clone()));
+                        
+                        }else if Self::are_hosts_related(crawl_target.host(), parsed_host){
+                            // New crawl target has been found
+                            if let Ok(new_target) = CrawlTarget::new(url::Host::Domain(parsed_host)) {
+                                new_targets.send(new_target).await;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    pub async fn crawl_target(client: reqwest::Client, crawl_target: CrawlTarget) {
-        println!("Crawling target... {}", crawl_target.host());
-    }
-
-    async fn crawl_url(client: reqwest::Client, url: reqwest::Url, crawl_target: Arc<Mutex<CrawlTarget>>) -> ()
+    async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<HashSet<String>>) -> ()
     {
-        let new_links_to_crawl: HashSet<reqwest::Url> = HashSet::new();
+        let mut new_links_to_crawl: HashSet<String> = HashSet::new();
 
         // Send get request
         if let Ok(response) = client.get(url).send().await
@@ -78,22 +121,30 @@ impl Vdovitsa {
                 let document = Html::parse_document(&response_text);    
                 let selector = Selector::parse("a").unwrap();
 
-                let mut potential_new_links: HashSet<reqwest::Url> = HashSet::new();
-
                 // Parse links from the webpage
                 for element in document.select(&selector) {
                     // Try to get the href attribute
                     if let Some(href) = element.value().attr("href") {
-                        if let Ok(link) = reqwest::Url::parse(href)
-                        {
-                            
-                        }                    
+                        new_links_to_crawl.insert(href.to_string());
                     }
                 }
-
             }
-
         }
+
+        new_links.send(new_links_to_crawl).await.unwrap();
+
+    }
+
+    /// Returns whether two hosts are related.
+    fn are_hosts_related(host1: &str, host2: &str) -> bool {
+        if host1.eq(host2) { return true; }
+        else {
+            let host1_parts: Vec<&str> = host1.split('.').rev().take(2).collect();
+            let host2_parts: Vec<&str> = host2.split('.').rev().take(2).collect();
+
+            return host1_parts.eq(&host2_parts);
+        }
+
     }
 }
 

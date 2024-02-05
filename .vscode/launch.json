@@ -3,5 +3,46 @@
     // Hover to view descriptions of existing attributes.
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
-    "configurations": []
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'cherna_vdovitsa'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=cherna_vdovitsa",
+                    // "--package=black_widow"
+                ],
+                "filter": {
+                    "name": "cherna_vdovitsa",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "--targets",
+                "targets"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'cherna_vdovitsa'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=cherna_vdovitsa",
+                    // "--package=black_widow"
+                ],
+                "filter": {
+                    "name": "cherna_vdovitsa",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
 }
