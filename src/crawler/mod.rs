@@ -11,7 +11,7 @@ use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 
 use crawl_target::CrawlTarget;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::{JoinHandle, JoinSet}};
 use url::Host;
 
 pub struct Vdovitsa {
@@ -45,15 +45,12 @@ impl Vdovitsa {
 
     pub async fn crawl(&mut self) {
         let (tx, mut rx) = mpsc::channel::<CrawlTarget>(32);
-
+        
+        let mut crawl_target_tasks: JoinSet<()> = JoinSet::new();
+        
         // Start crawling the initial targets
         for target in &self.crawl_targets {
-
-            let client = self.client.clone();
-            let target = target.clone();
-            let tx = tx.clone();
-
-            tokio::spawn(Self::crawl_target(client, target, tx));
+            crawl_target_tasks.spawn(Self::crawl_target(self.client.clone(), target.clone(), tx.clone()));
         }
 
         // Process new potential targets
@@ -62,10 +59,7 @@ impl Vdovitsa {
                 self.crawl_targets.insert(new_potential_target.clone());
                 println!("Adding new target: {}", new_potential_target.host());
 
-                let client = self.client.clone();
-                let tx = tx.clone();
-
-                tokio::spawn(Self::crawl_target(client, new_potential_target, tx));
+                crawl_target_tasks.spawn(Self::crawl_target(self.client.clone(), new_potential_target, tx.clone()));
             }
         }
 
@@ -83,8 +77,8 @@ impl Vdovitsa {
         crawled_urls.insert(format!("{}", crawl_target.host()).clone());
 
         let (tx, mut new_links) = mpsc::channel(32);
-
-        tokio::spawn(Self::crawl_url(
+        let mut crawl_url_tasks: JoinSet<()> = JoinSet::new();
+        crawl_url_tasks.spawn(Self::crawl_url(
             client.clone(),
             Url::parse(&format!("https://{}", crawl_target.host())).unwrap(),
             tx.clone(),
@@ -112,7 +106,7 @@ impl Vdovitsa {
                                             .to_string();
                                         if (!crawled_urls.contains(&normalized_url)) {
                                             crawled_urls.insert(normalized_url);
-                                            tokio::spawn(Self::crawl_url(
+                                            crawl_url_tasks.spawn(Self::crawl_url(
                                                 client.clone(),
                                                 parsed_url,
                                                 tx.clone(),
@@ -143,7 +137,7 @@ impl Vdovitsa {
                         let constructed_link =
                             format!("https://{}{}", crawl_target.host().to_string(), relative_path);
                         if !crawled_urls.contains(&constructed_link) {
-                            tokio::spawn(Self::crawl_url(client.clone(), Url::parse(&constructed_link).unwrap(), tx.clone()));
+                            crawl_url_tasks.spawn(Self::crawl_url(client.clone(), Url::parse(&constructed_link).unwrap(), tx.clone()));
                             crawled_urls.insert(constructed_link);
                         }
                     }
