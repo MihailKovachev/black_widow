@@ -119,7 +119,7 @@ impl Vdovitsa {
                                             .unwrap()
                                             .1
                                             .to_string();
-                                        if (!crawled_urls.contains(&normalized_url)) {
+                                        if !crawled_urls.contains(&normalized_url) {
                                             crawled_urls.insert(normalized_url);
                                             crawl_url_tasks.spawn(Self::crawl_url(
                                                 client.clone(),
@@ -243,13 +243,6 @@ pub enum HostRelation {
     Same,      // The hosts are the same host
     Related,   // The hosts are related
     Unrelated, // The hosts are unrelated
-}
-
-#[derive(Debug, Clone)]
-pub enum CrawlStatus {
-    Pending,
-    InProgress,
-    Finished,
 }
 
 #[derive(Debug)]
