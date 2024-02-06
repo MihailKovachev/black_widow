@@ -54,26 +54,3 @@ impl Hash for CrawlTarget {
         self.host.hash(state); // A crawl target is unique only if its host is
     }
 }
-
-#[derive(Debug)]
-pub struct CrawlTargetError {
-    message: String
-}
-
-impl CrawlTargetError {
-    pub fn new() -> CrawlTargetError {
-        CrawlTargetError { message: String::from("Crawl Target Error") }
-    }
-
-    pub fn with_message(message: &str) -> CrawlTargetError {
-        CrawlTargetError { message: String::from(message) }
-    }
-}
-
-impl std::error::Error for CrawlTargetError {}
-
-impl fmt::Display for CrawlTargetError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}

@@ -1,17 +1,14 @@
 pub mod crawl_target;
 
 use core::fmt;
-use std::{
-    cell::RefCell,
-    collections::{HashSet},
-    net::Ipv4Addr,
-};
+use std::collections::HashSet;
 
+use futures::FutureExt;
 use reqwest::{Client, Url};
 use scraper::{Html, Selector};
 
 use crawl_target::CrawlTarget;
-use tokio::{sync::mpsc, task::{JoinHandle, JoinSet}};
+use tokio::{sync::mpsc, task::JoinSet};
 use url::Host;
 
 pub struct Vdovitsa {
@@ -44,22 +41,35 @@ impl Vdovitsa {
     }
 
     pub async fn crawl(&mut self) {
-        let (tx, mut rx) = mpsc::channel::<CrawlTarget>(32);
-        
+        let (tx, mut new_targets) = mpsc::channel::<CrawlTarget>(32);
+        let weak_tx = tx.downgrade();
+
         let mut crawl_target_tasks: JoinSet<()> = JoinSet::new();
-        
+
         // Start crawling the initial targets
         for target in &self.crawl_targets {
-            crawl_target_tasks.spawn(Self::crawl_target(self.client.clone(), target.clone(), tx.clone()));
+            crawl_target_tasks.spawn(Self::crawl_target(
+                self.client.clone(),
+                target.clone(),
+                weak_tx.upgrade().unwrap(),
+            ));
         }
-
+        drop(tx);
         // Process new potential targets
-        while let Some(new_potential_target) = rx.recv().await {
+        while let Some(new_potential_target) = new_targets.recv().await {
+            while let Some(Some(_)) = crawl_target_tasks.join_next().now_or_never() {} // Remove finished tasks from crawl_target_tasks
+            if crawl_target_tasks.is_empty() {
+                new_targets.close();
+            }
+
             if !self.crawl_targets.contains(&new_potential_target) {
                 self.crawl_targets.insert(new_potential_target.clone());
-                println!("Adding new target: {}", new_potential_target.host());
 
-                crawl_target_tasks.spawn(Self::crawl_target(self.client.clone(), new_potential_target, tx.clone()));
+                crawl_target_tasks.spawn(Self::crawl_target(
+                    self.client.clone(),
+                    new_potential_target,
+                    weak_tx.upgrade().unwrap(),
+                ));
             }
         }
 
@@ -71,7 +81,8 @@ impl Vdovitsa {
         crawl_target: CrawlTarget,
         new_targets: mpsc::Sender<CrawlTarget>,
     ) {
-        println!("Crawling target... {}", crawl_target.host());
+        let crawl_target_host = crawl_target.host().to_owned();
+        println!("Crawling target... {}", crawl_target_host);
 
         let mut crawled_urls: HashSet<String> = HashSet::new();
         crawled_urls.insert(format!("{}", crawl_target.host()).clone());
@@ -85,6 +96,10 @@ impl Vdovitsa {
         ));
 
         while let Some(new_potential_link) = new_links.recv().await {
+            while let Some(Some(_)) = crawl_url_tasks.join_next().now_or_never() {} // Remove finished tasks from crawl_url_tasks
+            if crawl_url_tasks.is_empty() {
+                new_links.close();
+            }
             for link in new_potential_link {
                 if let Ok(parsed_url) = Url::parse(&link) {
                     // Only HTTP and HTTPS are supported
@@ -134,19 +149,28 @@ impl Vdovitsa {
                     let relative_path = link.trim_end_matches('/').to_string();
                     if relative_path.starts_with('/') {
                         // The URL is indeed a relative path
-                        let constructed_link =
-                            format!("https://{}{}", crawl_target.host().to_string(), relative_path);
+                        let constructed_link = format!(
+                            "https://{}{}",
+                            crawl_target.host().to_string(),
+                            relative_path
+                        );
                         if !crawled_urls.contains(&constructed_link) {
-                            crawl_url_tasks.spawn(Self::crawl_url(client.clone(), Url::parse(&constructed_link).unwrap(), tx.clone()));
+                            crawl_url_tasks.spawn(Self::crawl_url(
+                                client.clone(),
+                                Url::parse(&constructed_link).unwrap(),
+                                tx.clone(),
+                            ));
                             crawled_urls.insert(constructed_link);
                         }
                     }
                 }
             }
         }
+
+        println!("Finished crawling target: {}", crawl_target_host);
     }
 
-    async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<HashSet<String>>) -> () {
+    async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<HashSet<String>>) {
         let mut new_links_to_crawl: HashSet<String> = HashSet::new();
 
         // Send get request
@@ -166,7 +190,10 @@ impl Vdovitsa {
             }
         }
 
-        new_links.send(new_links_to_crawl).await.unwrap();
+        match new_links.send(new_links_to_crawl).await {
+            Ok(_) => (),
+            Err(_) => (),
+        }
     }
 
     /// Returns whether two hosts are related.
