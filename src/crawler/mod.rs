@@ -3,7 +3,7 @@ pub mod crawl_target;
 use core::fmt;
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{HashSet},
     net::Ipv4Addr,
 };
 
@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use url::Host;
 
 pub struct Vdovitsa {
-    crawl_targets: HashMap<CrawlTarget, RefCell<CrawlStatus>>,
+    crawl_targets: HashSet<CrawlTarget>,
     client: Client,
 }
 
@@ -30,14 +30,10 @@ impl Vdovitsa {
         ));
 
         // Set up the crawl targets
-        let mut crawl_targets = HashMap::with_capacity(initial_targets.len());
-        for target in initial_targets {
-            crawl_targets.insert(target, RefCell::new(CrawlStatus::Pending));
-        }
 
         if let Ok(client) = client_config.build() {
             Ok(Vdovitsa {
-                crawl_targets: crawl_targets,
+                crawl_targets: initial_targets,
                 client,
             })
         } else {
@@ -51,8 +47,7 @@ impl Vdovitsa {
         let (tx, mut rx) = mpsc::channel::<CrawlTarget>(32);
 
         // Start crawling the initial targets
-        for (target, status) in &mut self.crawl_targets {
-            status.replace(CrawlStatus::InProgress); // Why though, Rust, why?
+        for target in &self.crawl_targets {
 
             let client = self.client.clone();
             let target = target.clone();
@@ -63,11 +58,8 @@ impl Vdovitsa {
 
         // Process new potential targets
         while let Some(new_potential_target) = rx.recv().await {
-            if !self.crawl_targets.contains_key(&new_potential_target) {
-                self.crawl_targets.insert(
-                    new_potential_target.clone(),
-                    RefCell::new(CrawlStatus::InProgress),
-                );
+            if !self.crawl_targets.contains(&new_potential_target) {
+                self.crawl_targets.insert(new_potential_target.clone());
                 println!("Adding new target: {}", new_potential_target.host());
 
                 let client = self.client.clone();
@@ -119,11 +111,6 @@ impl Vdovitsa {
                                             .1
                                             .to_string();
                                         if (!crawled_urls.contains(&normalized_url)) {
-                                            println!(
-                                                "Adding URL {} for target {}",
-                                                parsed_url.to_string(),
-                                                crawl_target.host().to_string()
-                                            );
                                             crawled_urls.insert(normalized_url);
                                             tokio::spawn(Self::crawl_url(
                                                 client.clone(),
@@ -156,11 +143,6 @@ impl Vdovitsa {
                         let constructed_link =
                             format!("https://{}{}", crawl_target.host().to_string(), relative_path);
                         if !crawled_urls.contains(&constructed_link) {
-                            println!(
-                                "Adding URL {} for target {}",
-                                constructed_link.to_string(),
-                                crawl_target.host().to_string()
-                            );
                             tokio::spawn(Self::crawl_url(client.clone(), Url::parse(&constructed_link).unwrap(), tx.clone()));
                             crawled_urls.insert(constructed_link);
                         }
@@ -172,8 +154,6 @@ impl Vdovitsa {
 
     async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<HashSet<String>>) -> () {
         let mut new_links_to_crawl: HashSet<String> = HashSet::new();
-
-        println!("Crawling URL {}", url.to_string(),);
 
         // Send get request
         if let Ok(response) = client.get(url).send().await {
