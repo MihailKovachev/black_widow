@@ -4,12 +4,14 @@ use core::fmt;
 use std::collections::HashSet;
 
 use futures::FutureExt;
-use reqwest::{Client, Url};
+use reqwest::{header, Client, Url};
 use scraper::{Html, Selector};
 
 use crawl_target::CrawlTarget;
 use tokio::{sync::mpsc, task::JoinSet};
 use url::Host;
+
+use crate::util::web::*;
 
 pub struct Vdovitsa {
     crawl_targets: HashSet<CrawlTarget>,
@@ -25,8 +27,6 @@ impl Vdovitsa {
             "/",
             env!("CARGO_PKG_VERSION")
         ));
-
-        // Set up the crawl targets
 
         if let Ok(client) = client_config.build() {
             Ok(Vdovitsa {
@@ -54,7 +54,9 @@ impl Vdovitsa {
                 weak_tx.upgrade().unwrap(),
             ));
         }
+
         drop(tx);
+
         // Process new potential targets
         while let Some(new_potential_target) = new_targets.recv().await {
             while let Some(Some(_)) = crawl_target_tasks.join_next().now_or_never() {} // Remove finished tasks from crawl_target_tasks
@@ -76,7 +78,7 @@ impl Vdovitsa {
         println!("Crawling done");
     }
 
-    pub async fn crawl_target(
+    async fn crawl_target(
         client: Client,
         crawl_target: CrawlTarget,
         new_targets: mpsc::Sender<CrawlTarget>,
@@ -171,10 +173,18 @@ impl Vdovitsa {
     }
 
     async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<HashSet<String>>) {
-        let mut new_links_to_crawl: HashSet<String> = HashSet::new();
+        // Check if the URL returns an HTML page
+        let Ok(response_headers) = get_url_response_headers(&client, url.clone()).await else { return; };
+        let Some(content_type) = response_headers.get(header::CONTENT_TYPE) else { return; };
+        let Ok(content_type) = content_type.to_str() else { return; };
+        if !content_type.starts_with("text/html") {
+            return;
+        }
 
         // Send get request
-        if let Ok(response) = client.get(url).send().await {
+        let mut new_links_to_crawl: HashSet<String> = HashSet::new();
+
+        if let Ok(response) = get_url(&client, url).await {
             if let Ok(response_text) = response.text().await {
                 // Check content for links
                 let document = Html::parse_document(&response_text);
@@ -190,9 +200,9 @@ impl Vdovitsa {
             }
         }
 
-        match new_links.send(new_links_to_crawl).await {
-            Ok(_) => (),
-            Err(_) => (),
+        // Send the new links to the parent crawl_target
+        if !new_links_to_crawl.is_empty() {
+            new_links.send(new_links_to_crawl).await.unwrap();
         }
     }
 

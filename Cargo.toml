@@ -14,5 +14,3 @@ scraper = "0.18.1"
 console-subscriber = "0.2.0"
 futures = "0.3.30"
 
-[build]
-rustflags = ["--cfg", "tokio_unstable"]

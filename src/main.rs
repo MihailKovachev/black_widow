@@ -1,5 +1,6 @@
 mod cli;
 mod crawler;
+mod util;
 
 use clap::Parser;
 use cli::*;
@@ -42,7 +43,7 @@ async fn main() {
     match Vdovitsa::new(initial_targets)
     {
         Ok(mut crawler) => {
-            tokio::spawn(async move { crawler.crawl().await }).await.unwrap();
+            crawler.crawl().await;
         },
         Err(error) => { eprintln!("{}", error.to_string()); }
     }
