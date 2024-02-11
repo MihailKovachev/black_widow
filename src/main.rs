@@ -2,6 +2,7 @@ mod cli;
 mod crawler;
 mod web;
 mod dns;
+mod util;
 
 use clap::Parser;
 use cli::*;
