@@ -1,21 +1,19 @@
 use std::hash::Hash;
 
-use url::Host;
+use crate::web::host::Host;
 
 /// A crawl target
 #[derive(Debug, Eq, Clone, Hash)]
 pub struct CrawlTarget {
-    host: Host<String>, // The target host
+    host: Host // The target host
 }
 
 impl CrawlTarget {
-    pub fn new(host: Host<&str>) -> CrawlTarget {
+    pub fn new(host: Host) -> CrawlTarget {
 
         match host
         {
             Host::Domain(host) => {
-                let host = host.trim_end_matches('.').to_owned(); // Remove potential dot characters at the end of the host name
-                
                 CrawlTarget {
                     host: Host::Domain(host), 
                 }
@@ -33,7 +31,7 @@ impl CrawlTarget {
     }
 
     /// Returns the host of the crawl target
-    pub fn host(&self) -> &Host<String> {
+    pub fn host(&self) -> &Host {
         &self.host
     }
 }

@@ -9,9 +9,11 @@ use scraper::{Html, Selector};
 
 use crawl_target::CrawlTarget;
 use tokio::{sync::mpsc, task::JoinSet};
-use url::Host;
 
-use crate::util::web::*;
+use crate::web::{
+    host::{Host, HostRelationship},
+    http,
+};
 
 pub struct Vdovitsa {
     crawl_targets: HashSet<CrawlTarget>,
@@ -41,7 +43,7 @@ impl Vdovitsa {
     }
 
     pub async fn crawl(&mut self) {
-        let (tx, mut new_targets) = mpsc::channel::<CrawlTarget>(32);
+        let (tx, mut new_targets) = mpsc::channel::<CrawlTarget>(64);
         let weak_tx = tx.downgrade();
 
         let mut crawl_target_tasks: JoinSet<()> = JoinSet::new();
@@ -89,80 +91,60 @@ impl Vdovitsa {
         let mut crawled_urls: HashSet<String> = HashSet::new();
         crawled_urls.insert(format!("{}", crawl_target.host()).clone());
 
-        let (tx, mut new_links) = mpsc::channel(32);
+        let (tx, mut new_links) = mpsc::channel(64);
         let mut crawl_url_tasks: JoinSet<()> = JoinSet::new();
+
+        // Crawl the target host's main page
         crawl_url_tasks.spawn(Self::crawl_url(
             client.clone(),
-            Url::parse(&format!("https://{}", crawl_target.host())).unwrap(),
+            Url::parse(&format!("https://{}", crawl_target_host)).unwrap(),
             tx.clone(),
         ));
 
         while let Some(new_potential_link) = new_links.recv().await {
+            // This is sus
             while let Some(Some(_)) = crawl_url_tasks.join_next().now_or_never() {} // Remove finished tasks from crawl_url_tasks
             if crawl_url_tasks.is_empty() {
                 new_links.close();
             }
-            for link in new_potential_link {
-                if let Ok(parsed_url) = Url::parse(&link) {
-                    // Only HTTP and HTTPS are supported
-                    if parsed_url.scheme().eq("https") || parsed_url.scheme().eq("http") {
-                        match parsed_url.host() {
-                            Some(parsed_url_host) => {
-                                match Self::compare_hosts(
-                                    &parsed_url_host.to_owned(),
-                                    crawl_target.host(),
-                                ) {
-                                    HostRelation::Same => {
-                                        // The link belongs to the current target
-                                        let normalized_url: String = parsed_url
-                                            .to_string()
-                                            .trim_end_matches('/')
-                                            .split_once("://")
-                                            .unwrap()
-                                            .1
-                                            .to_string();
-                                        if !crawled_urls.contains(&normalized_url) {
-                                            crawled_urls.insert(normalized_url);
-                                            crawl_url_tasks.spawn(Self::crawl_url(
-                                                client.clone(),
-                                                parsed_url,
-                                                tx.clone(),
-                                            ));
-                                        }
-                                    }
-                                    HostRelation::Related => {
-                                        // The link points to a new potential target
-                                        new_targets
-                                            .send(CrawlTarget::new(parsed_url_host.clone()))
-                                            .await
-                                            .unwrap();
-                                    }
 
-                                    HostRelation::Unrelated => (), // Skip links to unrelated hosts
-                                }
-                            }
-                            None => (),
-                        }
-                    } else {
-                        continue;
+            for link in new_potential_link {
+                // If the URL is relative
+                if link.starts_with('/') {
+                    let absolute_link =
+                        format!("https://{}{}", crawl_target.host().to_string(), link);
+
+                    if crawled_urls.insert(absolute_link.clone()) {
+                        crawl_url_tasks.spawn(Self::crawl_url(
+                            client.clone(),
+                            Url::parse(&absolute_link).unwrap(),
+                            tx.clone(),
+                        ));
                     }
                 } else {
-                    // The link may be relative
-                    let relative_path = link.trim_end_matches('/').to_string();
-                    if relative_path.starts_with('/') {
-                        // The URL is indeed a relative path
-                        let constructed_link = format!(
-                            "https://{}{}",
-                            crawl_target.host().to_string(),
-                            relative_path
-                        );
-                        if !crawled_urls.contains(&constructed_link) {
-                            crawl_url_tasks.spawn(Self::crawl_url(
-                                client.clone(),
-                                Url::parse(&constructed_link).unwrap(),
-                                tx.clone(),
-                            ));
-                            crawled_urls.insert(constructed_link);
+                    let Ok(parsed_url) = Url::parse(&link) else { continue; };
+                    // Only HTTP and HTTPS are supported
+
+                    if parsed_url.scheme().eq("https") || parsed_url.scheme().eq("http") {
+                        let Some(parsed_url_host) = parsed_url.host() else { continue; };
+                        let Ok(parsed_url_host) = Host::try_from(parsed_url_host) else { continue; };
+                        
+                        match Host::host_relationship(crawl_target.host(), &parsed_url_host) {
+                            // A new link to crawl
+                            HostRelationship::Same => { 
+                                if crawled_urls.insert(parsed_url.to_string()) {
+                                    crawl_url_tasks.spawn(Self::crawl_url(
+                                        client.clone(),
+                                        parsed_url.clone(),
+                                        tx.clone(),
+                                    ));
+                                }
+                            },
+                            // A new target to crawl
+                            HostRelationship::Related => {
+                                new_targets.send(CrawlTarget::new(parsed_url_host)).await.unwrap();
+                            },
+                            HostRelationship::Unrelated => { continue; }
                         }
                     }
                 }
@@ -174,7 +156,7 @@ impl Vdovitsa {
 
     async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<HashSet<String>>) {
         // Check if the URL returns an HTML page
-        let Ok(response_headers) = get_url_response_headers(&client, url.clone()).await else { return; };
+        let Ok(response_headers) = http::get_url_response_headers(&client, url.clone()).await else { return; };
         let Some(content_type) = response_headers.get(header::CONTENT_TYPE) else { return; };
         let Ok(content_type) = content_type.to_str() else { return; };
         if !content_type.starts_with("text/html") {
@@ -184,7 +166,7 @@ impl Vdovitsa {
         // Send get request
         let mut new_links_to_crawl: HashSet<String> = HashSet::new();
 
-        if let Ok(response) = get_url(&client, url).await {
+        if let Ok(response) = http::get_url(&client, url).await {
             if let Ok(response_text) = response.text().await {
                 // Check content for links
                 let document = Html::parse_document(&response_text);
@@ -205,54 +187,6 @@ impl Vdovitsa {
             new_links.send(new_links_to_crawl).await.unwrap();
         }
     }
-
-    /// Returns whether two hosts are related.
-    fn compare_hosts(host1: &Host<String>, host2: &Host<String>) -> HostRelation {
-        match (host1, host2) {
-            (Host::Domain(domain1), Host::Domain(domain2)) => {
-                if domain1.eq(domain2) {
-                    HostRelation::Same
-                } else {
-                    let host1_parts: Vec<&str> = domain1.split('.').rev().take(2).collect();
-                    let host2_parts: Vec<&str> = domain2.split('.').rev().take(2).collect();
-
-                    if host1_parts.eq(&host2_parts) {
-                        HostRelation::Related
-                    } else {
-                        HostRelation::Unrelated
-                    }
-                }
-            }
-
-            // Both hosts are IPv4 addresses
-            (Host::Ipv4(ip1), Host::Ipv4(ip2)) => {
-                if ip1.eq(ip2) {
-                    HostRelation::Same
-                } else {
-                    HostRelation::Unrelated
-                }
-            }
-
-            // Both hosts are IPv6 address
-            (Host::Ipv6(ip1), Host::Ipv6(ip2)) => {
-                if ip1.eq(ip2) {
-                    HostRelation::Same
-                } else {
-                    HostRelation::Unrelated
-                }
-            }
-
-            // TODO: implement domain name resolution for the cases where one host is a domain and the other is an IP
-            _ => HostRelation::Unrelated,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum HostRelation {
-    Same,      // The hosts are the same host
-    Related,   // The hosts are related
-    Unrelated, // The hosts are unrelated
 }
 
 #[derive(Debug)]

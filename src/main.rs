@@ -1,11 +1,14 @@
 mod cli;
 mod crawler;
-mod util;
+mod web;
+mod dns;
 
 use clap::Parser;
 use cli::*;
 use crawler::*;
 use crawl_target::*;
+use dns::domain_name::DomainName;
+use web::host::Host;
 
 use std::{ fs::File, io::{BufRead, BufReader}, collections::HashSet};
 
@@ -22,17 +25,11 @@ async fn main() {
 
     console_subscriber::init();
 
-    // Process target URLs from file
+    // Process target hosts from file
     for line in targets_reader.lines() {
         match line {
-            Ok(line) => if let Ok(url) = reqwest::Url::parse(&line) {
-                match url.host() {
-                    Some(url_host) => {
-                        let target = CrawlTarget::new(url_host);
-                        initial_targets.insert(target); 
-                    },
-                    None => ()
-                }
+            Ok(line) => if let Ok(domain_name) = DomainName::parse(&line) {
+                initial_targets.insert(CrawlTarget::new(Host::Domain(domain_name)));
             }else {
                 eprintln!("Failed to parse target URL: {}", line);
             },

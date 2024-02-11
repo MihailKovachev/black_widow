@@ -20,4 +20,3 @@ pub async fn get_url_response_headers(client: &Client, url: Url) -> Result<Heade
         Err(error) => Err(error)
     }
 }
-
