@@ -8,7 +8,7 @@ use reqwest::{header, Client, Url};
 use scraper::{Html, Selector};
 
 use crawl_target::CrawlTarget;
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::{sync::mpsc, task::{join_set::Builder, JoinSet}};
 
 use crate::web::{
     host::{Host, HostRelationship},
@@ -44,35 +44,24 @@ impl Vdovitsa {
 
     pub async fn crawl(&mut self) {
         let (tx, mut new_targets) = mpsc::channel::<CrawlTarget>(64);
-        let weak_tx = tx.downgrade();
-
-        let mut crawl_target_tasks: JoinSet<()> = JoinSet::new();
 
         // Start crawling the initial targets
         for target in &self.crawl_targets {
-            crawl_target_tasks.spawn(Self::crawl_target(
+            tokio::spawn(Self::crawl_target(
                 self.client.clone(),
                 target.clone(),
-                weak_tx.upgrade().unwrap(),
+                tx.clone(),
             ));
         }
 
-        drop(tx);
-
         // Process new potential targets
         while let Some(new_potential_target) = new_targets.recv().await {
-            while let Some(Some(_)) = crawl_target_tasks.join_next().now_or_never() {} // Remove finished tasks from crawl_target_tasks
-            if crawl_target_tasks.is_empty() {
-                new_targets.close();
-            }
 
-            if !self.crawl_targets.contains(&new_potential_target) {
-                self.crawl_targets.insert(new_potential_target.clone());
-
-                crawl_target_tasks.spawn(Self::crawl_target(
+            if self.crawl_targets.insert(new_potential_target.clone()) {
+                tokio::spawn(Self::crawl_target(
                     self.client.clone(),
                     new_potential_target,
-                    weak_tx.upgrade().unwrap(),
+                    tx.clone()
                 ));
             }
         }
@@ -92,32 +81,26 @@ impl Vdovitsa {
         crawled_urls.insert(format!("{}", crawl_target.host()).clone());
 
         let (tx, mut new_links) = mpsc::channel(64);
-        let mut crawl_url_tasks: JoinSet<()> = JoinSet::new();
 
         // Crawl the target host's main page
-        crawl_url_tasks.spawn(Self::crawl_url(
+        tokio::spawn(Self::crawl_url(
             client.clone(),
-            Url::parse(&format!("https://{}", crawl_target_host)).unwrap(),
+            Url::parse(&format!("https://{}/", crawl_target_host)).unwrap(),
             tx.clone(),
         ));
 
-        while let Some(new_potential_link) = new_links.recv().await {
-            // This is sus
-            while let Some(Some(_)) = crawl_url_tasks.join_next().now_or_never() {} // Remove finished tasks from crawl_url_tasks
-            if crawl_url_tasks.is_empty() {
-                new_links.close();
-            }
-
-            for link in new_potential_link {
+        while let Some(new_potential_links) = new_links.recv().await {
+            for link in new_potential_links {
                 // If the URL is relative
-                if link.starts_with('/') {
+                if link.starts_with('/') && link.len() > 1 {
+
                     let absolute_link =
-                        format!("https://{}{}", crawl_target.host().to_string(), link);
+                        format!("{}{}", crawl_target.host().to_string(), link);
 
                     if crawled_urls.insert(absolute_link.clone()) {
-                        crawl_url_tasks.spawn(Self::crawl_url(
+                        tokio::spawn(Self::crawl_url(
                             client.clone(),
-                            Url::parse(&absolute_link).unwrap(),
+                            Url::parse(&format!("https://{}", absolute_link)).unwrap(),
                             tx.clone(),
                         ));
                     }
@@ -128,12 +111,13 @@ impl Vdovitsa {
                     if parsed_url.scheme().eq("https") || parsed_url.scheme().eq("http") {
                         let Some(parsed_url_host) = parsed_url.host() else { continue; };
                         let Ok(parsed_url_host) = Host::try_from(parsed_url_host) else { continue; };
-                        
+
                         match Host::host_relationship(crawl_target.host(), &parsed_url_host) {
                             // A new link to crawl
                             HostRelationship::Same => { 
                                 if crawled_urls.insert(parsed_url.to_string()) {
-                                    crawl_url_tasks.spawn(Self::crawl_url(
+                                    
+                                    tokio::spawn(Self::crawl_url(
                                         client.clone(),
                                         parsed_url.clone(),
                                         tx.clone(),
@@ -144,6 +128,7 @@ impl Vdovitsa {
                             HostRelationship::Related => {
                                 new_targets.send(CrawlTarget::new(parsed_url_host)).await.unwrap();
                             },
+
                             HostRelationship::Unrelated => { continue; }
                         }
                     }
