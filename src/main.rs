@@ -1,25 +1,32 @@
 mod cli;
 mod crawler;
-mod web;
 mod dns;
 mod util;
+mod web;
 
 use cli::{args::Args, Cli};
-use crawler::{crawler_config::CrawlerConfig, *};
 use crawl_target::*;
-use crossterm::Command;
+use crawler::{crawler_config::CrawlerConfig, *};
 use dns::domain_name::DomainName;
 use web::host::Host;
 
-use std::{ fs::File, io::{BufRead, BufReader}, collections::HashSet};
 use clap::Parser;
+use std::{
+    collections::HashSet, fs::{self, File}, io::{BufRead, BufReader}
+};
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
     let targets_file = match File::open(&args.targets) {
         Ok(file) => file,
-        Err(error) => {eprintln!("Failed to open the file with the target URLs: {}", error.to_string()); return }
+        Err(error) => {
+            eprintln!(
+                "Failed to open the file with the target URLs: {}",
+                error.to_string()
+            );
+            return;
+        }
     };
 
     let targets_reader = BufReader::new(targets_file);
@@ -30,12 +37,14 @@ async fn main() {
     // Process target hosts from file
     for line in targets_reader.lines() {
         match line {
-            Ok(line) => if let Ok(domain_name) = DomainName::parse(&line) {
-                initial_targets.insert(CrawlTarget::new(Host::Domain(domain_name)));
-            }else {
-                eprintln!("Failed to parse target URL: {}", line);
-            },
-            Err(error) => eprintln!("Failed to read targets from file: {}", error.to_string())
+            Ok(line) => {
+                if let Ok(domain_name) = DomainName::parse(&line) {
+                    initial_targets.insert(CrawlTarget::new(Host::Domain(domain_name)));
+                } else {
+                    eprintln!("Failed to parse target URL: {}", line);
+                }
+            }
+            Err(error) => eprintln!("Failed to read targets from file: {}", error.to_string()),
         };
     }
 
@@ -44,16 +53,16 @@ async fn main() {
         crawl_subdomains: args.crawl_subdomains
     };
 
-    match Crawler::new(crawler_config)
-    {
+    match Crawler::new(crawler_config) {
         Ok(mut crawler) => {
-            let crawler = tokio::spawn(async move { crawler.crawl().await; });
-        
+            let crawler = tokio::spawn(async move {
+                crawler.crawl().await;
+            });
 
             crawler.await.unwrap();
-        },
-        Err(error) => { eprintln!("{}", error.to_string()); }
+        }
+        Err(error) => {
+            eprintln!("{}", error.to_string());
+        }
     }
-    
-
 }

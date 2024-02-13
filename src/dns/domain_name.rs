@@ -1,4 +1,4 @@
-use std::{fmt::{self, Display}};
+use std::fmt::{self, Display};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DomainName {

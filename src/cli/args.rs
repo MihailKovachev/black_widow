@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::*;
-use crossterm::style::SetBackgroundColor;
 
 #[derive(Parser, Debug)]
 #[command(author = "Mihail Kovachev", version, about, long_about = None)]
@@ -11,9 +10,9 @@ pub struct Args {
     pub targets: PathBuf,
 
     #[arg(short = 's', long = "crawl-subdomains", default_value_t = false, help = "Whether to also crawl subdomains of the targets as they are found.")]
-    pub crawl_subdomains: bool
+    pub crawl_subdomains: bool,
 
-    //#[arg(short = 'o', long = "output-dir", value_name = "Output Directory")]
-    //pub output_dir: PathBuf
+    // #[arg(short = 'o', long = "output-dir", value_name = "Output Directory")]
+    // pub output_dir: PathBuf
 
 }

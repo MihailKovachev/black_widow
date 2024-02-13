@@ -21,7 +21,7 @@
             "args": [
                 "--targets",
                 "targets",
-                "--crawl-subdomains"
+                "--crawl-subdomains",
             ],
             "cwd": "${workspaceFolder}",
             "env": {
@@ -37,7 +37,6 @@
                     "test",
                     "--no-run",
                     "--bin=cherna_vdovitsa",
-                    // "--package=black_widow"
                 ],
                 "filter": {
                     "name": "cherna_vdovitsa",

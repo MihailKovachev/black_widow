@@ -1,5 +1,5 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::fmt::{self, write};
+use std::fmt;
 
 use crate::dns::domain_name::{DomainName, DomainNameParseError};
 

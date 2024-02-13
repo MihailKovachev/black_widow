@@ -2,15 +2,13 @@ pub mod crawl_target;
 pub mod crawler_config;
 
 use core::fmt;
-use std::collections::HashSet;
+use std::fs::{self, File};
+use std::sync::Arc;
+use std::{collections::HashSet, io::Write};
 
 use reqwest::{header, Client, Url};
 use scraper::{Html, Selector};
-
-use crawl_target::CrawlTarget;
 use tokio::sync::mpsc;
-
-use std::sync::Arc;
 
 use crate::{
     util::ChannelPacket,
@@ -19,6 +17,7 @@ use crate::{
         http,
     },
 };
+use crawl_target::CrawlTarget;
 
 use self::crawler_config::CrawlerConfig;
 
@@ -167,18 +166,17 @@ impl Crawler {
         url: Url,
         new_links: mpsc::Sender<ChannelPacket<HashSet<String>>>,
     ) {
-        // Check if the URL returns an HTML page
-        let Ok(response_headers) = http::get_url_response_headers(&client, url.clone()).await else { return; };
-        let Some(content_type) = response_headers.get(header::CONTENT_TYPE) else { return; };
-        let Ok(content_type) = content_type.to_str() else { return; };
-        if !content_type.starts_with("text/html") {
-            return;
-        }
-
-        // Send get request
         let mut new_links_to_crawl: HashSet<String> = HashSet::new();
 
-        if let Ok(response) = http::get_url(&client, url).await {
+        // Send get request
+        if let Ok(response) = http::get_url(&client, url.clone()).await {
+            // Check if the URL returns an HTML page
+            let Some(content_type) = response.headers().get(header::CONTENT_TYPE) else { return; };
+            let Ok(content_type) = content_type.to_str() else { return; };
+            if !content_type.starts_with("text/html") {
+                return;
+            }
+
             if let Ok(response_text) = response.text().await {
                 // Check content for links
                 let document = Html::parse_document(&response_text);
