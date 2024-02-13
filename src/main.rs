@@ -4,19 +4,20 @@ mod web;
 mod dns;
 mod util;
 
-use clap::Parser;
-use cli::*;
-use crawler::*;
+use cli::{args::Args, Cli};
+use crawler::{crawler_config::CrawlerConfig, *};
 use crawl_target::*;
+use crossterm::Command;
 use dns::domain_name::DomainName;
 use web::host::Host;
 
 use std::{ fs::File, io::{BufRead, BufReader}, collections::HashSet};
+use clap::Parser;
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
-    let targets_file = match File::open(&cli.targets) {
+    let args = Args::parse();
+    let targets_file = match File::open(&args.targets) {
         Ok(file) => file,
         Err(error) => {eprintln!("Failed to open the file with the target URLs: {}", error.to_string()); return }
     };
@@ -38,10 +39,18 @@ async fn main() {
         };
     }
 
-    match Vdovitsa::new(initial_targets)
+    let crawler_config = CrawlerConfig {
+        initial_targets,
+        crawl_subdomains: args.crawl_subdomains
+    };
+
+    match Vdovitsa::new(crawler_config)
     {
         Ok(mut crawler) => {
-            crawler.crawl().await;
+            let crawler = tokio::spawn(async move { crawler.crawl().await; });
+        
+
+            crawler.await.unwrap();
         },
         Err(error) => { eprintln!("{}", error.to_string()); }
     }

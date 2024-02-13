@@ -20,7 +20,8 @@
             },
             "args": [
                 "--targets",
-                "targets"
+                "targets",
+                "--crawl-subdomains"
             ],
             "cwd": "${workspaceFolder}",
             "env": {

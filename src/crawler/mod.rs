@@ -1,4 +1,5 @@
 pub mod crawl_target;
+pub mod crawler_config;
 
 use core::fmt;
 use std::collections::HashSet;
@@ -9,19 +10,27 @@ use scraper::{Html, Selector};
 use crawl_target::CrawlTarget;
 use tokio::sync::mpsc;
 
-use crate::{util::ChannelPacket, web::{
-    host::{Host, HostRelationship},
-    http,
-}};
+use std::sync::Arc;
+
+use crate::{
+    util::ChannelPacket,
+    web::{
+        host::{Host, HostRelationship},
+        http,
+    },
+};
+
+use self::crawler_config::CrawlerConfig;
 
 pub struct Vdovitsa {
     crawl_targets: HashSet<CrawlTarget>,
     client: Client,
+    config: Arc<CrawlerConfig>,
 }
 
 impl Vdovitsa {
     /// Create a Vdovitsa crawler with initial targets.
-    pub fn new(initial_targets: HashSet<CrawlTarget>) -> Result<Vdovitsa, CrawlerError> {
+    pub fn new(config: CrawlerConfig) -> Result<Vdovitsa, CrawlerError> {
         // Configure the web client
         let client_config = Client::builder().user_agent(concat!(
             env!("CARGO_PKG_NAME"),
@@ -31,8 +40,9 @@ impl Vdovitsa {
 
         if let Ok(client) = client_config.build() {
             Ok(Vdovitsa {
-                crawl_targets: initial_targets,
+                crawl_targets: config.initial_targets.clone(),
                 client,
+                config: Arc::new(config),
             })
         } else {
             Err(CrawlerError::with_message(
@@ -50,6 +60,7 @@ impl Vdovitsa {
                 self.client.clone(),
                 target.clone(),
                 tx.clone(),
+                Arc::clone(&self.config),
             ));
         }
 
@@ -61,7 +72,8 @@ impl Vdovitsa {
                 tokio::spawn(Self::crawl_target(
                     self.client.clone(),
                     new_potential_target.data,
-                    new_potential_target.sender
+                    new_potential_target.sender,
+                    Arc::clone(&self.config),
                 ));
             }
         }
@@ -73,6 +85,7 @@ impl Vdovitsa {
         client: Client,
         crawl_target: CrawlTarget,
         new_targets: mpsc::Sender<ChannelPacket<CrawlTarget>>,
+        config: Arc<CrawlerConfig>,
     ) {
         let crawl_target_host = crawl_target.host().to_owned();
         println!("Crawling target... {}", crawl_target_host);
@@ -95,9 +108,7 @@ impl Vdovitsa {
             for link in new_potential_links.data {
                 // If the URL is relative
                 if link.starts_with('/') && link.len() > 1 {
-
-                    let absolute_link =
-                        format!("{}{}", crawl_target.host().to_string(), link);
+                    let absolute_link = format!("{}{}", crawl_target.host().to_string(), link);
 
                     if crawled_urls.insert(absolute_link.clone()) {
                         tokio::spawn(Self::crawl_url(
@@ -116,24 +127,32 @@ impl Vdovitsa {
 
                         match Host::host_relationship(crawl_target.host(), &parsed_url_host) {
                             // A new link to crawl
-                            HostRelationship::Same => { 
+                            HostRelationship::Same => {
                                 if crawled_urls.insert(parsed_url.to_string()) {
-                                    
                                     tokio::spawn(Self::crawl_url(
                                         client.clone(),
                                         parsed_url.clone(),
                                         new_potential_links.sender.clone(),
                                     ));
                                 }
-                            },
+                            }
+
                             // A new target to crawl
                             HostRelationship::Related => {
-                                new_targets.send(ChannelPacket {
-                                    sender: new_targets.clone(),
-                                    data: CrawlTarget::new(parsed_url_host)}).await.unwrap();
-                            },
+                                if config.crawl_subdomains {
+                                    new_targets
+                                        .send(ChannelPacket {
+                                            sender: new_targets.clone(),
+                                            data: CrawlTarget::new(parsed_url_host),
+                                        })
+                                        .await
+                                        .unwrap();
+                                }
+                            }
 
-                            HostRelationship::Unrelated => { continue; }
+                            HostRelationship::Unrelated => {
+                                continue;
+                            }
                         }
                     }
                 }
@@ -143,7 +162,11 @@ impl Vdovitsa {
         println!("Finished crawling target: {}", crawl_target_host);
     }
 
-    async fn crawl_url(client: Client, url: Url, new_links: mpsc::Sender<ChannelPacket<HashSet<String>>>) {
+    async fn crawl_url(
+        client: Client,
+        url: Url,
+        new_links: mpsc::Sender<ChannelPacket<HashSet<String>>>,
+    ) {
         // Check if the URL returns an HTML page
         let Ok(response_headers) = http::get_url_response_headers(&client, url.clone()).await else { return; };
         let Some(content_type) = response_headers.get(header::CONTENT_TYPE) else { return; };
@@ -173,7 +196,13 @@ impl Vdovitsa {
 
         // Send the new links to the parent crawl_target
         if !new_links_to_crawl.is_empty() {
-            new_links.send(ChannelPacket{ sender: new_links.clone(), data: new_links_to_crawl } ).await.unwrap();
+            new_links
+                .send(ChannelPacket {
+                    sender: new_links.clone(),
+                    data: new_links_to_crawl,
+                })
+                .await
+                .unwrap();
         }
     }
 }
