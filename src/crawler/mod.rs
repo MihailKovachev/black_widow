@@ -22,15 +22,15 @@ use crate::{
 
 use self::crawler_config::CrawlerConfig;
 
-pub struct Vdovitsa {
+pub struct Crawler {
     crawl_targets: HashSet<CrawlTarget>,
     client: Client,
     config: Arc<CrawlerConfig>,
 }
 
-impl Vdovitsa {
+impl Crawler {
     /// Create a Vdovitsa crawler with initial targets.
-    pub fn new(config: CrawlerConfig) -> Result<Vdovitsa, CrawlerError> {
+    pub fn new(config: CrawlerConfig) -> Result<Crawler, CrawlerError> {
         // Configure the web client
         let client_config = Client::builder().user_agent(concat!(
             env!("CARGO_PKG_NAME"),
@@ -39,7 +39,7 @@ impl Vdovitsa {
         ));
 
         if let Ok(client) = client_config.build() {
-            Ok(Vdovitsa {
+            Ok(Crawler {
                 crawl_targets: config.initial_targets.clone(),
                 client,
                 config: Arc::new(config),

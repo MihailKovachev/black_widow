@@ -44,7 +44,7 @@ async fn main() {
         crawl_subdomains: args.crawl_subdomains
     };
 
-    match Vdovitsa::new(crawler_config)
+    match Crawler::new(crawler_config)
     {
         Ok(mut crawler) => {
             let crawler = tokio::spawn(async move { crawler.crawl().await; });
