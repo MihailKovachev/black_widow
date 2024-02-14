@@ -1,12 +1,13 @@
 use reqwest::{header::{HeaderMap, HeaderValue}, Client, Response};
 use url::Url;
 
+
 /// Perform a HEAD request to the specified URL
 pub async fn head_url(client: &Client, url: Url) -> Result<Response, reqwest::Error> {
     client.head(url).send().await
 }
 
-/// Perform a GET request to the specified URL
+/// Perform an asynchrnonous GET request to the specified URL
 pub async fn get_url(client: &Client, url: Url) -> Result<Response, reqwest::Error >{
     client.get(url).send().await
 }

@@ -22,6 +22,8 @@
                 "--targets",
                 "targets",
                 "--crawl-subdomains",
+                "-o",
+                "output.db"
             ],
             "cwd": "${workspaceFolder}",
             "env": {

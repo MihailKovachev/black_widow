@@ -8,26 +8,18 @@ use cli::{args::Args, Cli};
 use crawl_target::*;
 use crawler::{crawler_config::CrawlerConfig, *};
 use dns::domain_name::DomainName;
+use rusqlite::{params, Connection};
 use web::host::Host;
 
 use clap::Parser;
 use std::{
-    collections::HashSet, fs::{self, File}, io::{BufRead, BufReader}
+    collections::HashSet, fs::{self, File}, io::{BufRead, BufReader}, path::PathBuf, process
 };
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let targets_file = match File::open(&args.targets) {
-        Ok(file) => file,
-        Err(error) => {
-            eprintln!(
-                "Failed to open the file with the target URLs: {}",
-                error.to_string()
-            );
-            return;
-        }
-    };
+    let targets_file = File::open(&args.targets)?;
 
     let targets_reader = BufReader::new(targets_file);
     let mut initial_targets: HashSet<CrawlTarget> = HashSet::new();
@@ -48,21 +40,33 @@ async fn main() {
         };
     }
 
+    let db_path = path_clean::clean(std::env::current_dir()?.join(&args.output_file));
+
+    // Set up the output database
+    let db = Connection::open(&args.output_file)?;
+    
+    // Create initial targets table
+    db.execute("CREATE TABLE IF NOT EXISTS initial_targets (
+        id INTEGER PRIMARY KEY,
+        host TEXT)", ())?;
+
+    for target in &initial_targets {
+        db.execute("INSERT INTO initial_targets (host) VALUES (?1)", params![target.host().to_string()])?;
+    }
+    db.close().unwrap();
+
     let crawler_config = CrawlerConfig {
         initial_targets,
-        crawl_subdomains: args.crawl_subdomains
+        crawl_subdomains: args.crawl_subdomains,
+        db_path,
     };
 
-    match Crawler::new(crawler_config) {
-        Ok(mut crawler) => {
-            let crawler = tokio::spawn(async move {
-                crawler.crawl().await;
-            });
+    let mut crawler = Crawler::new(crawler_config)?;
+    let crawler_task = tokio::spawn(async move {
+        crawler.crawl().await;
+    });
 
-            crawler.await.unwrap();
-        }
-        Err(error) => {
-            eprintln!("{}", error.to_string());
-        }
-    }
+    crawler_task.await.unwrap();
+
+    Ok(())
 }

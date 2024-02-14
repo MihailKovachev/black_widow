@@ -7,4 +7,5 @@ use crate::CrawlTarget;
 pub struct CrawlerConfig {
     pub initial_targets: HashSet<CrawlTarget>,
     pub crawl_subdomains: bool,
+    pub db_path: PathBuf
 }

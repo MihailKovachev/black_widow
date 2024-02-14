@@ -3,10 +3,11 @@ pub mod crawler_config;
 
 use core::fmt;
 use std::fs::{self, File};
-use std::sync::Arc;
-use std::{collections::HashSet, io::Write};
+use std::sync::{Arc, Mutex};
+use std::{collections::HashSet};
 
 use reqwest::{header, Client, Url};
+use rusqlite::{params, Connection};
 use scraper::{Html, Selector};
 use tokio::sync::mpsc;
 
@@ -53,6 +54,20 @@ impl Crawler {
     pub async fn crawl(&mut self) {
         let (tx, mut new_targets) = mpsc::channel::<ChannelPacket<CrawlTarget>>(64);
 
+        // Set up URLs table
+        let Ok(db) = Connection::open(&self.config.db_path) else { eprintln!("Failed to open DB!"); return; };
+    
+        // Create initial targets table
+        db.execute("CREATE TABLE IF NOT EXISTS urls (
+            id INTEGER PRIMARY KEY,
+            url TEXT NOT NULL,
+            target TEXT NOT NULL,
+            response_code INTEGER,
+            response_body BLOB)
+            ", ()).unwrap();
+
+        db.close().unwrap();
+
         // Start crawling the initial targets
         for target in &self.crawl_targets {
             tokio::spawn(Self::crawl_target(
@@ -94,11 +109,17 @@ impl Crawler {
 
         let (tx, mut new_links) = mpsc::channel::<ChannelPacket<HashSet<String>>>(64);
 
+        // Create DB table for the target
+        let Ok(db) = Connection::open(&config.db_path) else { eprintln!("Failed to create database table for: {}", crawl_target_host); return;};
+        let db = Arc::new(Mutex::new(db));
+
+
         // Crawl the target host's main page
         tokio::spawn(Self::crawl_url(
             client.clone(),
             Url::parse(&format!("https://{}/", crawl_target_host)).unwrap(),
             tx.clone(),
+            Arc::clone(&db),
         ));
 
         drop(tx);
@@ -114,6 +135,7 @@ impl Crawler {
                             client.clone(),
                             Url::parse(&format!("https://{}", absolute_link)).unwrap(),
                             new_potential_links.sender.clone(),
+                            Arc::clone(&db),
                         ));
                     }
                 } else {
@@ -132,6 +154,7 @@ impl Crawler {
                                         client.clone(),
                                         parsed_url.clone(),
                                         new_potential_links.sender.clone(),
+                                        Arc::clone(&db),
                                     ));
                                 }
                             }
@@ -165,29 +188,49 @@ impl Crawler {
         client: Client,
         url: Url,
         new_links: mpsc::Sender<ChannelPacket<HashSet<String>>>,
+        db: Arc<Mutex<Connection>>
     ) {
         let mut new_links_to_crawl: HashSet<String> = HashSet::new();
 
         // Send get request
-        if let Ok(response) = http::get_url(&client, url.clone()).await {
-            // Check if the URL returns an HTML page
-            let Some(content_type) = response.headers().get(header::CONTENT_TYPE) else { return; };
-            let Ok(content_type) = content_type.to_str() else { return; };
-            if !content_type.starts_with("text/html") {
-                return;
+        let Ok(response) = http::get_url(&client, url.clone()).await else { return; };
+        
+        let status_code = response.status();
+        if !status_code.is_success() { return; }
+
+        // Check if the URL returns an HTML page
+        let Some(content_type) = response.headers().get(header::CONTENT_TYPE) else { return; };
+        let Ok(content_type) = content_type.to_str() else { return; };
+        if !content_type.starts_with("text/html") {
+            return;
+        }
+
+        if let Ok(response_text) = response.text().await {
+            // Check content for links
+            let document = Html::parse_document(&response_text);
+            let selector = Selector::parse("a").unwrap();
+
+            // Parse links from the webpage
+            for element in document.select(&selector) {
+                // Try to get the href attribute
+                if let Some(href) = element.value().attr("href") {
+                    new_links_to_crawl.insert(href.to_owned());
+                }
             }
 
-            if let Ok(response_text) = response.text().await {
-                // Check content for links
-                let document = Html::parse_document(&response_text);
-                let selector = Selector::parse("a").unwrap();
-
-                // Parse links from the webpage
-                for element in document.select(&selector) {
-                    // Try to get the href attribute
-                    if let Some(href) = element.value().attr("href") {
-                        new_links_to_crawl.insert(href.to_owned());
+            match db.lock() {
+                Ok(db) => {
+                    if let Err(error) = db.execute(
+                        "INSERT INTO urls (url, target, response_code, response_body) VALUES (?1, ?2, ?3, ?4)", 
+                        params![url.to_string(), url.host_str().unwrap(), status_code.as_u16(), response_text]
+                    ) {
+                        eprintln!("Failed to update DB: {}", error);
+                        return;
                     }
+                }
+                Err(error) => {
+                    eprintln!("Failed to obtain mutex lock: {}", error);
+                    return;
                 }
             }
         }
