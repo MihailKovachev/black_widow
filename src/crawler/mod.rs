@@ -56,8 +56,7 @@ impl Crawler {
 
         // Set up URLs table
         let Ok(db) = Connection::open(&self.config.db_path) else { eprintln!("Failed to open DB!"); return; };
-    
-        // Create initial targets table
+
         db.execute("CREATE TABLE IF NOT EXISTS urls (
             id INTEGER PRIMARY KEY,
             url TEXT NOT NULL,
@@ -113,6 +112,16 @@ impl Crawler {
         let Ok(db) = Connection::open(&config.db_path) else { eprintln!("Failed to create database table for: {}", crawl_target_host); return;};
         let db = Arc::new(Mutex::new(db));
 
+        if let Ok(db) = db.lock() {
+            if let Err(err) = db.execute("INSERT INTO targets (host) VALUES (?1)", params![crawl_target_host.to_string()]) {
+                eprintln!("Failed to update DB: {}", err);
+                return;
+            }
+        }
+        else {
+            eprintln!("Failed to acquire lock on database.");
+            return;
+        }
 
         // Crawl the target host's main page
         tokio::spawn(Self::crawl_url(

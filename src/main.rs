@@ -46,13 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Connection::open(&args.output_file)?;
     
     // Create initial targets table
-    db.execute("CREATE TABLE IF NOT EXISTS initial_targets (
+    db.execute("CREATE TABLE IF NOT EXISTS targets (
         id INTEGER PRIMARY KEY,
         host TEXT)", ())?;
 
-    for target in &initial_targets {
-        db.execute("INSERT INTO initial_targets (host) VALUES (?1)", params![target.host().to_string()])?;
-    }
     db.close().unwrap();
 
     let crawler_config = CrawlerConfig {
